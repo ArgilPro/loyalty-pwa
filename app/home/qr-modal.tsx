@@ -1,0 +1,148 @@
+'use client';
+
+import { useEffect, useState } from 'react';
+import QRCode from 'qrcode';
+
+interface Props {
+  open: boolean;
+  onClose: () => void;
+}
+
+export default function QRModal({ open, onClose }: Props) {
+  const [qrDataUrl, setQrDataUrl] = useState<string | null>(null);
+  const [token, setToken] = useState<string | null>(null);
+  const [secondsLeft, setSecondsLeft] = useState(0);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  async function generateQR() {
+    setLoading(true);
+    setError(null);
+    setQrDataUrl(null);
+    setToken(null);
+
+    try {
+      const res = await fetch('/api/qr-session', { method: 'POST' });
+      const data = await res.json();
+
+      if (!res.ok) throw new Error(data.error ?? 'Kon QR niet genereren');
+
+      // Genereer QR-afbeelding
+      const dataUrl = await QRCode.toDataURL(data.token, {
+        width: 512,
+        margin: 2,
+        color: { dark: '#1A1F24', light: '#FFFFFF' },
+      });
+
+      setQrDataUrl(dataUrl);
+      setToken(data.token);
+
+      // Bereken seconden tot expiry
+      const expiresAt = new Date(data.expires_at).getTime();
+      setSecondsLeft(Math.max(0, Math.floor((expiresAt - Date.now()) / 1000)));
+    } catch (err: any) {
+      setError(err.message);
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  // Open: genereer automatisch
+  useEffect(() => {
+    if (open) generateQR();
+  }, [open]);
+
+  // Countdown
+  useEffect(() => {
+    if (secondsLeft <= 0) return;
+    const interval = setInterval(() => {
+      setSecondsLeft((s) => {
+        if (s <= 1) {
+          setToken(null);
+          setQrDataUrl(null);
+          return 0;
+        }
+        return s - 1;
+      });
+    }, 1000);
+    return () => clearInterval(interval);
+  }, [secondsLeft > 0]);
+
+  // Sluit bij escape
+  useEffect(() => {
+    function onKey(e: KeyboardEvent) {
+      if (e.key === 'Escape') onClose();
+    }
+    if (open) window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [open, onClose]);
+
+  if (!open) return null;
+
+  return (
+    <div className="fixed inset-0 z-50 bg-black/70 flex items-center justify-center p-4" onClick={onClose}>
+      <div
+        className="bg-white rounded-2xl max-w-sm w-full p-6 shadow-2xl"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="text-center mb-4">
+          <h2 className="text-lg font-bold" style={{ color: '#1A1F24' }}>
+            Toon deze QR aan de merchant
+          </h2>
+          <p className="text-xs text-[#6B6F75] mt-1">De code verloopt automatisch</p>
+        </div>
+
+        {loading && (
+          <div className="aspect-square flex items-center justify-center">
+            <div className="animate-spin rounded-full h-12 w-12 border-4 border-slate-200 border-t-slate-900" />
+          </div>
+        )}
+
+        {error && (
+          <div className="p-4 bg-red-50 border border-red-200 rounded-lg text-sm text-red-700">
+            {error}
+          </div>
+        )}
+
+        {qrDataUrl && secondsLeft > 0 && (
+          <div className="text-center">
+            <img src={qrDataUrl} alt="QR code" className="mx-auto rounded-xl" />
+            <p className="text-sm font-semibold text-amber-600 mt-3">
+              {secondsLeft}s resterend
+            </p>
+          </div>
+        )}
+
+        {!qrDataUrl && !loading && !error && (
+          <div className="text-center py-8">
+            <p className="text-sm text-[#6B6F75]">QR verlopen</p>
+            <button
+              onClick={generateQR}
+              className="mt-3 bg-[#1A1F24] text-white px-4 py-2 rounded-lg text-sm font-semibold hover:bg-[#2C333A]"
+            >
+              Nieuwe QR genereren
+            </button>
+          </div>
+        )}
+
+        <div className="mt-4 space-y-2">
+          {qrDataUrl && secondsLeft > 0 && (
+            <button
+              onClick={generateQR}
+              disabled={loading}
+              className="w-full border border-slate-300 text-slate-700 py-2 rounded-lg text-sm font-medium hover:bg-slate-50 disabled:opacity-50"
+            >
+              Vernieuwen
+            </button>
+          )}
+          <button
+            onClick={onClose}
+            className="w-full text-[#6B6F75] py-2 text-sm hover:text-slate-700"
+          >
+            Sluiten
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
